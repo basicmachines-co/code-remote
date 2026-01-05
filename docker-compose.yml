@@ -1,0 +1,44 @@
+# Docker Compose for self-hosted Claude Remote
+#
+# Usage:
+#   Server only (agent runs on host or separate machine):
+#     docker-compose up -d
+#
+#   Full stack (server + containerized Linux agent):
+#     docker-compose --profile full up -d
+#
+# For production, put this behind a reverse proxy (nginx, caddy, traefik)
+# to handle HTTPS. Claude.ai requires HTTPS for MCP connections.
+
+services:
+  server:
+    build: ./server
+    ports:
+      - "8080:8080"
+    environment:
+      - AUTH_TOKEN=${AUTH_TOKEN:?Set AUTH_TOKEN in .env file}
+      - DATABASE_PATH=/data/claude_remote.db
+      - PORT=8080
+    volumes:
+      - claude_remote_data:/data
+    restart: unless-stopped
+
+  agent:
+    build: ./agent
+    profiles:
+      - full
+    environment:
+      - AUTH_TOKEN=${AUTH_TOKEN}
+      - RELAY_URL=ws://server:8080/ws/agent
+    volumes:
+      # Mount a workspace directory for file operations
+      - agent_workspace:/home/agent/workspace
+      # Optional: mount host directories (uncomment as needed)
+      # - ~/projects:/home/agent/projects:ro
+    depends_on:
+      - server
+    restart: unless-stopped
+
+volumes:
+  claude_remote_data:
+  agent_workspace:

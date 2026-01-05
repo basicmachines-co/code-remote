@@ -1,0 +1,31 @@
+# fly.toml - Fly.io configuration for Code Remote Server
+# Deploy with: fly deploy
+#
+# IMPORTANT: Change the app name below to your unique name before deploying.
+# This name determines your URLs:
+#   - MCP endpoint: https://YOUR-APP-NAME.fly.dev/sse
+#   - WebSocket:    wss://YOUR-APP-NAME.fly.dev/ws/agent
+
+app = "YOUR-APP-NAME"  # <-- CHANGE THIS (e.g., "paul-code-remote")
+primary_region = 'dfw'
+
+[build]
+
+[env]
+  DATABASE_PATH = '/data/code_remote.db'
+  PORT = '8080'
+
+[[mounts]]
+  source = 'code_remote_data'
+  destination = '/data'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '512mb'
