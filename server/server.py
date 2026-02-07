@@ -355,22 +355,22 @@ async def handle_messages(request):
 # WebSocket Endpoint for Mac Agent
 # =============================================================================
 
-# Private network ranges for agent connections
+# Private network range for agent connections
+# We use Tailscale on the server (see start.sh) so agents connect via Tailscale IPs.
+# Alternative: Fly.io WireGuard (fdaa::/16) could work but requires additional setup
+# on the client side and doesn't integrate as cleanly.
 TAILSCALE_NETWORK = ipaddress.ip_network("100.64.0.0/10")  # Tailscale CGNAT
-FLYIO_NETWORK = ipaddress.ip_network("fdaa::/16")  # Fly.io private network
 REQUIRE_PRIVATE_NETWORK = os.getenv("REQUIRE_PRIVATE_NETWORK", "true").lower() == "true"
 
 
 def is_private_network_ip(ip_str: str) -> bool:
-    """Check if IP is from Tailscale, Fly.io private network, or localhost."""
+    """Check if IP is from Tailscale network or localhost."""
     try:
         ip = ipaddress.ip_address(ip_str)
         if ip.is_loopback:
             return True
         if isinstance(ip, ipaddress.IPv4Address):
             return ip in TAILSCALE_NETWORK
-        if isinstance(ip, ipaddress.IPv6Address):
-            return ip in FLYIO_NETWORK
         return False
     except ValueError:
         return False
