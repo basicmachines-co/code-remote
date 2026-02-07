@@ -191,6 +191,67 @@ For other options:
 - All traffic encrypted via HTTPS/WSS
 - Commands logged to SQLite for audit trail
 - **Sandboxed mode**: Run the agent in a Docker container for full isolation
+- **Tailscale integration**: Restrict agent connections to your private Tailscale network
+
+### Tailscale Setup (Recommended)
+
+For additional security, you can configure the server to only accept agent connections from your Tailscale network. This ensures that even if your AUTH_TOKEN is compromised, only devices on your tailnet can connect as an agent.
+
+**1. Generate a Tailscale auth key:**
+
+Go to https://login.tailscale.com/admin/settings/keys and create a new auth key:
+- Check "Reusable" (so the server can reconnect after restarts)
+- Optionally check "Ephemeral"
+- Note: Keys expire after 90 days maximum
+
+**2. Set the auth key as a Fly.io secret:**
+
+```bash
+fly secrets set TAILSCALE_AUTHKEY=tskey-auth-xxxxx -a YOUR-APP-NAME
+```
+
+**3. Deploy the server:**
+
+```bash
+cd server
+fly deploy
+```
+
+**4. Configure the agent to connect via Tailscale:**
+
+After deployment, find your server's Tailscale IP in the Fly.io logs:
+```bash
+fly logs -a YOUR-APP-NAME | grep "peerapi: serving"
+# Look for: peerapi: serving on http://100.x.x.x:xxxxx
+```
+
+Update your agent's `.env`:
+```bash
+RELAY_URL=ws://100.x.x.x:8080/ws/agent
+```
+
+**Architecture with Tailscale:**
+```
++----------------+          +-------------------+          +----------------+
+|                |   SSE    |                   |    WS    |                |
+|   AI Client    |<-------->|  Server (Cloud)   |<-------->|     Agent      |
+|   (MCP)        |  HTTPS   |  + Tailscale      | Tailscale|   (Daemon)     |
++----------------+          +-------------------+          +----------------+
+                                    |
+                            Only accepts agent
+                            connections from
+                            Tailscale IPs
+                            (100.64.0.0/10)
+```
+
+**Note:** The MCP endpoint remains publicly accessible (for Claude.ai), but agent connections are restricted to your Tailscale network.
+
+### Disabling Tailscale Requirement
+
+To allow agent connections from any IP (less secure):
+```bash
+fly secrets set REQUIRE_PRIVATE_NETWORK=false -a YOUR-APP-NAME
+```
 
 ## Project Structure
 
@@ -201,6 +262,7 @@ code-remote/
 │
 ├── server/              # Server (Docker or Fly.io)
 │   ├── server.py        # Combined MCP + Relay server
+│   ├── start.sh         # Startup script (Tailscale + server)
 │   ├── Dockerfile
 │   ├── fly.toml         # Fly.io config (change app name)
 │   └── requirements.txt
@@ -210,7 +272,8 @@ code-remote/
 │   ├── Dockerfile       # Sandboxed Linux agent
 │   ├── requirements.txt
 │   ├── setup.sh         # Setup script (prompts for URL)
-│   ├── run.sh           # Run script
+│   ├── run.sh           # Run script (with log rotation)
+│   ├── logs/            # Agent logs (auto-rotated)
 │   └── com.code.remote-agent.plist
 │
 └── docs/                # Documentation

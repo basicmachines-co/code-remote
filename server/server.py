@@ -16,6 +16,8 @@ from enum import Enum
 from typing import Optional
 from contextlib import asynccontextmanager
 
+import ipaddress
+
 import aiosqlite
 from starlette.applications import Starlette
 from starlette.routing import Route, WebSocketRoute
@@ -353,13 +355,54 @@ async def handle_messages(request):
 # WebSocket Endpoint for Mac Agent
 # =============================================================================
 
+# Private network ranges for agent connections
+TAILSCALE_NETWORK = ipaddress.ip_network("100.64.0.0/10")  # Tailscale CGNAT
+FLYIO_NETWORK = ipaddress.ip_network("fdaa::/16")  # Fly.io private network
+REQUIRE_PRIVATE_NETWORK = os.getenv("REQUIRE_PRIVATE_NETWORK", "true").lower() == "true"
+
+
+def is_private_network_ip(ip_str: str) -> bool:
+    """Check if IP is from Tailscale, Fly.io private network, or localhost."""
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        if ip.is_loopback:
+            return True
+        if isinstance(ip, ipaddress.IPv4Address):
+            return ip in TAILSCALE_NETWORK
+        if isinstance(ip, ipaddress.IPv6Address):
+            return ip in FLYIO_NETWORK
+        return False
+    except ValueError:
+        return False
+
+
+def get_client_ip(websocket: WebSocket) -> str:
+    """Extract real client IP from headers or connection."""
+    # Fly.io and most proxies use X-Forwarded-For
+    forwarded = websocket.headers.get("x-forwarded-for", "")
+    if forwarded:
+        # First IP in the chain is the original client
+        return forwarded.split(",")[0].strip()
+    # Fallback to direct connection
+    client = websocket.client
+    return client.host if client else ""
+
+
 async def agent_websocket(websocket: WebSocket):
+    # Check private network IP requirement (Tailscale or Fly.io internal)
+    if REQUIRE_PRIVATE_NETWORK:
+        client_ip = get_client_ip(websocket)
+        if not is_private_network_ip(client_ip):
+            print(f"[{datetime.now(timezone.utc).isoformat()}] Rejected agent connection from non-private IP: {client_ip}")
+            await websocket.close(code=4003, reason="Forbidden: Private network required")
+            return
+
     # Verify token from query params
     token = websocket.query_params.get("token")
     if not token or not secrets.compare_digest(token, AUTH_TOKEN):
         await websocket.close(code=4003, reason="Forbidden")
         return
-    
+
     await manager.connect_agent(websocket)
     
     # Send any pending commands

@@ -6,7 +6,7 @@
 #   - MCP endpoint: https://YOUR-APP-NAME.fly.dev/sse
 #   - WebSocket:    wss://YOUR-APP-NAME.fly.dev/ws/agent
 
-app = "YOUR-APP-NAME"  # <-- CHANGE THIS (e.g., "paul-code-remote")
+app = "YOUR-APP-NAME"  # <-- Change this before deploying
 primary_region = 'dfw'
 
 [build]
