@@ -7,7 +7,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/drew/code/code-remote/agent/run.sh</string>
+        <string>/Users/YOUR_USERNAME/code/code-remote/agent/run.sh</string>
     </array>
 
     <key>EnvironmentVariables</key>
@@ -23,12 +23,12 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/Users/drew/code/code-remote/agent/logs/launchd-stdout.log</string>
+    <string>/Users/YOUR_USERNAME/code/code-remote/agent/logs/launchd-stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/drew/code/code-remote/agent/logs/launchd-stderr.log</string>
+    <string>/Users/YOUR_USERNAME/code/code-remote/agent/logs/launchd-stderr.log</string>
 
     <key>WorkingDirectory</key>
-    <string>/Users/drew/code/code-remote/agent</string>
+    <string>/Users/YOUR_USERNAME/code/code-remote/agent</string>
 </dict>
 </plist>
