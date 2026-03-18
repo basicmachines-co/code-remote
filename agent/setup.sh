@@ -46,10 +46,17 @@ if [ ! -f "$SCRIPT_DIR/.env" ]; then
         exit 1
     fi
 
+    read -p "Machine Name (e.g. drews-m1, jodys-imac): " MACHINE_NAME
+    if [ -z "$MACHINE_NAME" ]; then
+        echo "ERROR: Machine name is required!"
+        exit 1
+    fi
+
     # Create .env file
     cat > "$SCRIPT_DIR/.env" << EOF
 RELAY_URL=$RELAY_URL
 AUTH_TOKEN=$AUTH_TOKEN
+MACHINE_NAME=$MACHINE_NAME
 EOF
 
     echo "Configuration saved to .env"

@@ -6,7 +6,7 @@
 #   - MCP endpoint: https://YOUR-APP-NAME.fly.dev/sse
 #   - WebSocket:    wss://YOUR-APP-NAME.fly.dev/ws/agent
 
-app = "YOUR-APP-NAME"  # <-- Change this before deploying
+app = "groksrc-claude-remote"
 primary_region = 'dfw'
 
 [build]
@@ -16,7 +16,7 @@ primary_region = 'dfw'
   PORT = '8080'
 
 [[mounts]]
-  source = 'code_remote_data'
+  source = 'claude_remote_data'
   destination = '/data'
 
 [http_service]

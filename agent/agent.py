@@ -21,10 +21,11 @@ from websockets.exceptions import ConnectionClosed
 
 # --- Configuration ---
 
-# IMPORTANT: Set RELAY_URL in .env file (see .env.example)
+# IMPORTANT: Set RELAY_URL, AUTH_TOKEN, and MACHINE_NAME in .env file
 # Format: wss://YOUR-APP-NAME.fly.dev/ws/agent
 RELAY_URL = os.getenv("RELAY_URL", "")
 AUTH_TOKEN = os.getenv("AUTH_TOKEN", "")
+MACHINE_NAME = os.getenv("MACHINE_NAME", "")
 RECONNECT_DELAY = 5  # seconds
 MAX_OUTPUT_SIZE = 1_000_000  # 1MB max output
 DEFAULT_SHELL = os.getenv("SHELL", "/bin/sh")
@@ -299,7 +300,7 @@ async def handle_command(data: dict) -> dict:
 
 async def connect_and_run():
     """Connect to relay and process commands"""
-    url = f"{RELAY_URL}?token={AUTH_TOKEN}"
+    url = f"{RELAY_URL}?token={AUTH_TOKEN}&machine={MACHINE_NAME}"
     
     log(f"Connecting to relay...")
     
@@ -349,7 +350,12 @@ async def main():
         log_error("AUTH_TOKEN environment variable not set!")
         sys.exit(1)
 
+    if not MACHINE_NAME:
+        log_error("MACHINE_NAME environment variable not set!")
+        sys.exit(1)
+
     log("Code Remote Agent starting...")
+    log(f"Machine name: {MACHINE_NAME}")
     log(f"Relay URL: {RELAY_URL.split('?')[0]}")
     log(f"Home directory: {Path.home()}")
     

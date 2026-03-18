@@ -67,6 +67,7 @@ async def init_db():
                 id TEXT PRIMARY KEY,
                 type TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
+                machine TEXT NOT NULL DEFAULT '',
                 command TEXT,
                 path TEXT,
                 content TEXT,
@@ -86,6 +87,11 @@ async def init_db():
         await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_commands_created ON commands(created_at DESC)
         """)
+        # Migration: add machine column to existing tables
+        try:
+            await db.execute("ALTER TABLE commands ADD COLUMN machine TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass  # Column already exists
         await db.commit()
 
 # =============================================================================
@@ -94,32 +100,36 @@ async def init_db():
 
 class ConnectionManager:
     def __init__(self):
-        self.agent_connection: Optional[WebSocket] = None
-        
-    async def connect_agent(self, websocket: WebSocket):
+        self.agents: dict[str, WebSocket] = {}
+
+    async def connect_agent(self, machine: str, websocket: WebSocket):
         await websocket.accept()
-        self.agent_connection = websocket
-        print(f"[{datetime.now(timezone.utc).isoformat()}] Agent connected")
-        
-    def disconnect_agent(self):
-        self.agent_connection = None
-        print(f"[{datetime.now(timezone.utc).isoformat()}] Agent disconnected")
-        
-    def is_agent_connected(self) -> bool:
-        return self.agent_connection is not None
-        
-    async def send_command(self, command_id: str, command_data: dict) -> bool:
-        if not self.agent_connection:
+        self.agents[machine] = websocket
+        print(f"[{datetime.now(timezone.utc).isoformat()}] Agent connected: {machine}")
+
+    def disconnect_agent(self, machine: str):
+        self.agents.pop(machine, None)
+        print(f"[{datetime.now(timezone.utc).isoformat()}] Agent disconnected: {machine}")
+
+    def is_agent_connected(self, machine: str) -> bool:
+        return machine in self.agents
+
+    def connected_machines(self) -> list[str]:
+        return list(self.agents.keys())
+
+    async def send_command(self, machine: str, command_id: str, command_data: dict) -> bool:
+        ws = self.agents.get(machine)
+        if not ws:
             return False
         try:
-            await self.agent_connection.send_json({
+            await ws.send_json({
                 "type": "execute",
                 "id": command_id,
                 **command_data
             })
             return True
         except Exception as e:
-            print(f"Error sending command: {e}")
+            print(f"Error sending command to {machine}: {e}")
             return False
 
 
@@ -129,24 +139,28 @@ manager = ConnectionManager()
 # Command Execution (called by MCP tools)
 # =============================================================================
 
-async def execute_command(command_type: str, timeout: int = 60, **kwargs) -> str:
+async def execute_command(machine: str, command_type: str, timeout: int = 60, **kwargs) -> str:
     """Submit a command and wait for results."""
-    
-    if not manager.is_agent_connected():
-        return "Error: Mac agent is not connected. Please ensure the agent is running."
-    
+
+    if not manager.is_agent_connected(machine):
+        connected = manager.connected_machines()
+        if connected:
+            return f"Error: Machine '{machine}' is not connected. Connected machines: {', '.join(connected)}"
+        return "Error: No agents are connected. Please ensure the agent is running."
+
     command_id = secrets.token_urlsafe(12)
     now = datetime.now(timezone.utc).isoformat()
-    
+
     # Insert command into database
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("""
-            INSERT INTO commands (id, type, status, command, path, content, working_dir, timeout, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO commands (id, type, status, machine, command, path, content, working_dir, timeout, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             command_id,
             command_type,
             CommandStatus.PENDING.value,
+            machine,
             kwargs.get("command"),
             kwargs.get("path"),
             kwargs.get("content"),
@@ -155,9 +169,9 @@ async def execute_command(command_type: str, timeout: int = 60, **kwargs) -> str
             now
         ))
         await db.commit()
-    
+
     # Send to agent
-    success = await manager.send_command(command_id, {
+    success = await manager.send_command(machine, command_id, {
         "command_type": command_type,
         "command": kwargs.get("command"),
         "path": kwargs.get("path"),
@@ -208,15 +222,22 @@ async def execute_command(command_type: str, timeout: int = 60, **kwargs) -> str
 
 mcp_server = Server("claude-remote")
 
+MACHINE_PARAM = {
+    "type": "string",
+    "description": "Target machine name (e.g. 'drews-m1', 'jodys-imac')"
+}
+
+
 @mcp_server.list_tools()
 async def list_tools():
     return [
         Tool(
             name="run_shell_command",
-            description="Execute a shell command on the connected machine. Use this to run any terminal command.",
+            description="Execute a shell command on a remote machine. Use this to run any terminal command.",
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "machine": MACHINE_PARAM,
                     "command": {
                         "type": "string",
                         "description": "The shell command to execute"
@@ -231,29 +252,31 @@ async def list_tools():
                         "default": 60
                     }
                 },
-                "required": ["command"]
+                "required": ["machine", "command"]
             }
         ),
         Tool(
             name="read_file",
-            description="Read the contents of a file on the connected machine.",
+            description="Read the contents of a file on a remote machine.",
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "machine": MACHINE_PARAM,
                     "path": {
                         "type": "string",
                         "description": "Path to the file. Use ~ for home directory."
                     }
                 },
-                "required": ["path"]
+                "required": ["machine", "path"]
             }
         ),
         Tool(
             name="write_file",
-            description="Write content to a file on the connected machine. Creates parent directories if needed.",
+            description="Write content to a file on a remote machine. Creates parent directories if needed.",
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "machine": MACHINE_PARAM,
                     "path": {
                         "type": "string",
                         "description": "Path to the file. Use ~ for home directory."
@@ -263,26 +286,27 @@ async def list_tools():
                         "description": "Content to write to the file"
                     }
                 },
-                "required": ["path", "content"]
+                "required": ["machine", "path", "content"]
             }
         ),
         Tool(
             name="list_directory",
-            description="List contents of a directory on the connected machine.",
+            description="List contents of a directory on a remote machine.",
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "machine": MACHINE_PARAM,
                     "path": {
                         "type": "string",
                         "description": "Path to the directory. Use ~ for home directory."
                     }
                 },
-                "required": ["path"]
+                "required": ["machine", "path"]
             }
         ),
         Tool(
             name="check_agent_status",
-            description="Check if the agent is connected and ready to receive commands.",
+            description="Check which machines are connected and ready to receive commands.",
             inputSchema={
                 "type": "object",
                 "properties": {}
@@ -294,38 +318,43 @@ async def list_tools():
 @mcp_server.call_tool()
 async def call_tool(name: str, arguments: dict):
     try:
+        machine = arguments.get("machine", "")
+
         if name == "run_shell_command":
             result = await execute_command(
+                machine,
                 "shell",
                 command=arguments["command"],
                 working_dir=arguments.get("working_dir"),
                 timeout=arguments.get("timeout", 60)
             )
-            
+
         elif name == "read_file":
-            result = await execute_command("read_file", path=arguments["path"])
-            
+            result = await execute_command(machine, "read_file", path=arguments["path"])
+
         elif name == "write_file":
             result = await execute_command(
+                machine,
                 "write_file",
                 path=arguments["path"],
                 content=arguments["content"]
             )
-            
+
         elif name == "list_directory":
-            result = await execute_command("list_dir", path=arguments["path"])
-            
+            result = await execute_command(machine, "list_dir", path=arguments["path"])
+
         elif name == "check_agent_status":
-            if manager.is_agent_connected():
-                result = "✓ Agent is connected and ready to receive commands"
+            connected = manager.connected_machines()
+            if connected:
+                result = f"Connected machines: {', '.join(connected)}"
             else:
-                result = "✗ Agent is NOT connected - make sure it's running on the Mac"
-                
+                result = "No agents are connected"
+
         else:
             result = f"Unknown tool: {name}"
-            
+
         return [TextContent(type="text", text=result)]
-        
+
     except Exception as e:
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
@@ -403,18 +432,25 @@ async def agent_websocket(websocket: WebSocket):
         await websocket.close(code=4003, reason="Forbidden")
         return
 
-    await manager.connect_agent(websocket)
-    
-    # Send any pending commands
+    # Get machine name from query params
+    machine = websocket.query_params.get("machine", "")
+    if not machine:
+        await websocket.close(code=4002, reason="Missing 'machine' query parameter")
+        return
+
+    await manager.connect_agent(machine, websocket)
+
+    # Send any pending commands for this machine
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT * FROM commands WHERE status = 'pending' ORDER BY created_at ASC"
+            "SELECT * FROM commands WHERE status = 'pending' AND machine = ? ORDER BY created_at ASC",
+            (machine,)
         ) as cursor:
             pending = await cursor.fetchall()
-            
+
         for row in pending:
-            await manager.send_command(row["id"], {
+            await manager.send_command(machine, row["id"], {
                 "command_type": row["type"],
                 "command": row["command"],
                 "path": row["path"],
@@ -427,11 +463,11 @@ async def agent_websocket(websocket: WebSocket):
                 (CommandStatus.RUNNING.value, datetime.now(timezone.utc).isoformat(), row["id"])
             )
         await db.commit()
-    
+
     try:
         while True:
             data = await websocket.receive_json()
-            
+
             if data.get("type") == "result":
                 # Update command with result
                 async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -448,16 +484,16 @@ async def agent_websocket(websocket: WebSocket):
                         data.get("id")
                     ))
                     await db.commit()
-                print(f"[{datetime.now(timezone.utc).isoformat()}] Command {data.get('id')} completed")
-                
+                print(f"[{datetime.now(timezone.utc).isoformat()}] Command {data.get('id')} completed on {machine}")
+
             elif data.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
-                
+
     except WebSocketDisconnect:
-        manager.disconnect_agent()
+        manager.disconnect_agent(machine)
     except Exception as e:
-        print(f"WebSocket error: {e}")
-        manager.disconnect_agent()
+        print(f"WebSocket error ({machine}): {e}")
+        manager.disconnect_agent(machine)
 
 # =============================================================================
 # REST Endpoints
@@ -466,7 +502,7 @@ async def agent_websocket(websocket: WebSocket):
 async def health(request):
     return JSONResponse({
         "status": "ok",
-        "agent_connected": manager.is_agent_connected(),
+        "connected_machines": manager.connected_machines(),
         "timestamp": datetime.now(timezone.utc).isoformat()
     })
 

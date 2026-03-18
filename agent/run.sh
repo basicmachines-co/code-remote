@@ -18,6 +18,6 @@ fi
 
 source "$SCRIPT_DIR/.env"
 source "$SCRIPT_DIR/.venv/bin/activate"
-export RELAY_URL AUTH_TOKEN
+export RELAY_URL AUTH_TOKEN MACHINE_NAME
 
 python3 "$SCRIPT_DIR/agent.py" 2>&1 | tee -a "$LOG_FILE"
